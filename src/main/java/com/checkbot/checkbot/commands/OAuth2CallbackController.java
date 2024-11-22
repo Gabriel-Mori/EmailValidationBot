@@ -33,6 +33,9 @@ public class OAuth2CallbackController {
     @Value("${discord.client-secret}")
     private String clientSecret;
 
+    @Value("${server.url}")
+    private String serverUrl;
+
     @GetMapping
     public ResponseEntity<String> handleCallback(@RequestParam("code") String code) {
         try {
@@ -45,7 +48,7 @@ public class OAuth2CallbackController {
             body.add("client_secret", clientSecret);
             body.add("grant_type", "authorization_code");
             body.add("code", code);
-            body.add("redirect_uri", "http://localhost:8082/callback");
+            body.add("redirect_uri", "serverUrl/callback");
 
             HttpEntity<MultiValueMap<String, String>> request = new HttpEntity<>(body, headers);
 

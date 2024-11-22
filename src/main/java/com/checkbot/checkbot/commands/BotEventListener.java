@@ -17,7 +17,7 @@ public class BotEventListener extends ListenerAdapter {
 
         user.openPrivateChannel().queue(channel ->
                 channel.sendMessage("Bem-vindo! Para acessar o servidor, por favor, autentique-se usando este link: " +
-                        "https://discord.com/oauth2/authorize?client_id=1309177195393978470&response_type=code&redirect_uri=http%3A%2F%2Flocalhost%3A8082%2Fcallback&scope=email+identify").queue()
+                        "https://discord.com/oauth2/authorize?client_id=1309177195393978470&response_type=code&redirect_uri=https%3A%2F%2Femail-validation-bot.vercel.app%2Fcallback&scope=email+identify").queue()
         );
 
         event.getGuild().addRoleToMember(UserSnowflake.fromId(user.getId()), event.getGuild().getRoleById("ID_DO_ROLE_RESTRITO")).queue();
