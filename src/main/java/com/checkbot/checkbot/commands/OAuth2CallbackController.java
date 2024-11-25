@@ -1,31 +1,24 @@
 package com.checkbot.checkbot.commands;
 
-import net.dv8tion.jda.api.entities.User;
-import net.dv8tion.jda.api.entities.Guild;
-import net.dv8tion.jda.api.entities.UserSnowflake;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.HttpEntity;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
-import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
-import org.springframework.util.LinkedMultiValueMap;
-import org.springframework.util.MultiValueMap;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
-import org.springframework.web.client.RestTemplate;
-import net.dv8tion.jda.api.JDA;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.web.reactive.function.client.WebClient;
 
-import java.util.Map;
-
-import static com.checkbot.checkbot.main.DevBot.jda;
 
 @RestController
 @RequestMapping("/callback")
 public class OAuth2CallbackController {
+
+    @Autowired
+    private VerificationService verificationService;
 
     @Value("${discord.client-id}")
     private String clientId;
@@ -33,84 +26,72 @@ public class OAuth2CallbackController {
     @Value("${discord.client-secret}")
     private String clientSecret;
 
-    @Value("${server.url}")
-    private String serverUrl;
+
+    private final WebClient webClient = WebClient.create("https://discord.com/api");
 
     @GetMapping
     public ResponseEntity<String> handleCallback(@RequestParam("code") String code) {
         try {
-            RestTemplate restTemplate = new RestTemplate();
-            HttpHeaders headers = new HttpHeaders();
-            headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
 
-            MultiValueMap<String, String> body = new LinkedMultiValueMap<>();
-            body.add("client_id", clientId);
-            body.add("client_secret", clientSecret);
-            body.add("grant_type", "authorization_code");
-            body.add("code", code);
-            body.add("redirect_uri", "serverUrl/callback");
+            String tokenResponse = webClient.post()
+                    .uri("/oauth2/token")
+                    .header("Content-Type", "application/x-www-form-urlencoded")
+                    .bodyValue("client_id=" + clientId +
+                            "&client_secret=" + clientSecret +
+                            "&grant_type=authorization_code" +
+                            "&code=" + code +
+                            "&redirect_uri=http://localhost:8080/callback")
+                    .retrieve()
+                    .bodyToMono(String.class)
+                    .block();
 
-            HttpEntity<MultiValueMap<String, String>> request = new HttpEntity<>(body, headers);
+            String accessToken = extractAccessToken(tokenResponse);
 
-            ResponseEntity<Map> response = restTemplate.exchange(
-                    "https://discord.com/api/oauth2/token",
-                    HttpMethod.POST,
-                    request,
-                    Map.class
-            );
+            String userInfo = webClient.get()
+                    .uri("/users/@me")
+                    .header("Authorization", "Bearer " + accessToken)
+                    .retrieve()
+                    .bodyToMono(String.class)
+                    .block();
 
-            String accessToken = (String) response.getBody().get("access_token");
 
-            HttpHeaders authHeaders = new HttpHeaders();
-            authHeaders.setBearerAuth(accessToken);
-            HttpEntity<String> authRequest = new HttpEntity<>(authHeaders);
+            String email = extractEmail(userInfo);
+            String userId = extractUserId(userInfo);
 
-            ResponseEntity<Map> userResponse = restTemplate.exchange(
-                    "https://discord.com/api/users/@me",
-                    HttpMethod.GET,
-                    authRequest,
-                    Map.class
-            );
-
-            Map<String, Object> userInfo = userResponse.getBody();
-            String email = (String) userInfo.get("email");
-            String userId = (String) userInfo.get("id");
-
-            if (email != null && email.endsWith("@grupoirrah.com")) {
-                releaseAccess(userId);
-                return ResponseEntity.ok("Verificação concluída com sucesso.");
-            } else {
-                // Obtenha o usuário pelo ID
-                jda.retrieveUserById(userId).queue(user -> {
-                    // Enviar mensagem privada ao usuário
-                    user.openPrivateChannel().queue(channel -> {
-                        channel.sendMessage("Seu e-mail não é válido. Para acessar o servidor, por favor, entre com um e-mail com o domínio @grupoirrah.com.").queue();
-                    });
-                });
-
-                // Remover o usuário do servidor
-                removeUser(userId);
-                return ResponseEntity.status(HttpStatus.FORBIDDEN).body("E-mail inválido. Você foi removido do servidor.");
-            }
+            return verificationService.verifyEmail(email, userId);
         } catch (Exception e) {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Erro ao processar o callback.");
         }
     }
 
-    private void releaseAccess(String userId) {
-        JDA jdaInstance = jda;
-        Guild guild = jdaInstance.getGuildById("1309538302285709395");
-        if (guild != null) {
-            guild.removeRoleFromMember(UserSnowflake.fromId(userId), guild.getRoleById("1309575295187030167")).queue();
-            guild.addRoleToMember(UserSnowflake.fromId(userId), guild.getRoleById("1309538404903420018")).queue();
+
+    private String extractAccessToken(String tokenResponse) {
+        try {
+            ObjectMapper mapper = new ObjectMapper();
+            JsonNode node = mapper.readTree(tokenResponse);
+            return node.get("access_token").asText();
+        } catch (Exception e) {
+            throw new RuntimeException("Erro ao extrair access_token da resposta: " + tokenResponse, e);
         }
     }
 
-    private void removeUser(String userId) {
-        JDA jdaInstance = jda;
-        Guild guild = jdaInstance.getGuildById("1309538302285709395");
-        if (guild != null) {
-            guild.kick(UserSnowflake.fromId(userId)).queue();
+    private String extractEmail(String userInfo) {
+        try {
+            ObjectMapper mapper = new ObjectMapper();
+            JsonNode node = mapper.readTree(userInfo);
+            return node.get("email").asText();
+        } catch (Exception e) {
+            throw new RuntimeException("Erro ao extrair e-mail da resposta: " + userInfo, e);
+        }
+    }
+
+    private String extractUserId(String userInfo) {
+        try {
+            ObjectMapper mapper = new ObjectMapper();
+            JsonNode node = mapper.readTree(userInfo);
+            return node.get("id").asText();
+        } catch (Exception e) {
+            throw new RuntimeException("Erro ao extrair ID do usuário da resposta: " + userInfo, e);
         }
     }
 
